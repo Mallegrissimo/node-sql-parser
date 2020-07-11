@@ -127,13 +127,13 @@
       if (left.join_type == 'outer_join')
       {
         ret.join_type = left.join_type;
-        ret.outer_join_type = "right outer join";
+        ret.outer_join_type = 'right outer join';
         if(left.table){
           if(right.table){
           ret.outer_join_suggestion = `${left.table} RIGHT OUTER JOIN ${right.table} ON ${left.table}.${left.column} ${op} ${right.table}.${right.column}` ;
           }
           else{
-            ret.outer_join_suggestion = `${left.table}.${left.column} ${op} ${right.type=="column_ref"? right.column : right.type=="string"? "'"+ right.value + "'" : right.value}` ;
+            ret.outer_join_suggestion = `${left.table}.${left.column} ${op} ${right.type=='column_ref'? right.column : right.type=="string"? "'"+ right.value + "'" : right.value}` ;
           }
         }
         else{
@@ -141,7 +141,7 @@
             ret.outer_join_suggestion = `${left.column} ${op} ${right.table}.${right.column}` ;
           }
           else{
-            ret.outer_join_suggestion = `${right.column} ${op}  ${left.type=="column_ref"? left.column: left.type=="string"? "'"+ left.value + "'" : left.value}` ;
+            ret.outer_join_suggestion = `${right.column} ${op}  ${left.type=='column_ref'? left.column: left.type=="string"? "'"+ left.value + "'" : left.value}` ;
           }
         }
       }
@@ -193,89 +193,7 @@
     }
     return columns
   }
-  
-  // refine outer join in where_clause and from clause
-  function refine_outer_join(new_where_obj, from_clause_array, current_path, current_where_parent, current_where_node)
-  {
-    console.log("path:" + current_path +":" + JSON.stringify(current_where_node));
-    //TODO how to identify node level of original object to replace parent node with left/right node
-    current_path = current_where_parent ? current_path:"root>";
-    if(current_where_node.type =="binary_expr")
-    {
-      if(current_where_node.left && current_where_node.left.type =="binary_expr")
-      {
-          current_where_parent = current_where_node;
-          current_where_node = current_where_node.left;
-          console.log("path:" + current_path);
-          refine_outer_join(new_where_obj, from_clause_array, current_path +">L", current_where_parent, current_where_node);
-      }
-      else if(current_where_node.right && current_where_node.right.type =="binary_expr")
-      {
-          current_where_parent = current_where_node;
-          current_where_node = current_where_node.right;
-          console.log("path:" + current_path);
-          refine_outer_join(new_where_obj, from_clause_array, current_path +">R", current_where_parent, current_where_node);
-      }
-      else if (current_where_node.join_type =="outer_join")
-      {
-        //1) replace current where clause in original/updated where_clause
-        //2) add join to from clause //TODO complicate if nested/multi OR condition
-        //3) update current_path
-        console.log('outer join:' + current_where_node.outer_join_type);
-        if(left.table && right.table){
-          let tbl = {};
-          from_clause_array.forEach(f=>{
-            tbl[f.as||f.table] = f.table;
-          })
-          let isNewJoin = !tbl[left.table] || !tbl[right.table];
-          let isFirstJoin = !(from_clause_array.length > 0); //this should not happen
-          if (!tbl[left.table])
-          {
-            if(isFirstJoin)
-            {
-              from_clause_array.push({
-                        "db": tbl[left.table].db,
-                        "table": left.table,
-                        "as": left.table
-                        });
-            }
-          }
-          console.log("outer join type:" + current_where_node.outer_join_type);
 
-          if(tbl[left.table] && tbl[right.table]){
-            //2) add join to from clause
-            //2)1. identify if join condition is inside one of the binary_expr
-            //2)2. 
-            from_clause_array.push({
-                      "db": tbl[left.table].db,
-                      "table": tbl[left.table].table,
-                      "as": left.table,
-                      "join": current_where_node.outer_join_type =="left outer join"? "LEFT JOIN" : "RIGHT JOIN",
-                      "on": {
-                          "type": "binary_expr",
-                          "operator": left.operator,
-                          "left": {
-                            "type": "column_ref",
-                            "table": left.table,
-                            "column": left.column
-                          },
-                          "right": {
-                            "type": "column_ref",
-                            "table": right.table,
-                            "column": right.column
-                          }
-                        }
-                      });  
-          }
-        }
-      }
-      else 
-      {
-        console.log('unexpected things happened');
-      }
-    }
-    return new_where_obj;
-  }
   
   const COMPRESSION_OPERATOR_MAP =
   {
@@ -1599,7 +1517,7 @@ not_expr
 
 comparison_expr
   = left:additive_expr __ rh:comparison_op_right? {
-      if (rh === null) return left;
+  	  if (rh === null) return left;
       else if (rh.type === 'arithmetic') return createBinaryExprChain(left, rh.tail);
       else return createBinaryExpr(rh.op, left, rh.right);
     }
@@ -1621,8 +1539,18 @@ comparison_op_right
   / is_op_right
   / like_op_right
 
+pound_sign_expr
+  = (whitespace)* POUND_SIGN
+  / POUND_SIGN
+
 arithmetic_op_right
-  = l:(__ arithmetic_comparison_operator __ additive_expr)+ {
+  = __ op:arithmetic_comparison_operator __ pound_sign_expr parts:ident_start+ pound_sign_expr  {
+    return {
+        type: 'arithmetic',
+        tail: [[[],op,[],{type:'sql_plus_variable',value:parts.join('')}]]
+      };
+    }
+  / l:(__ arithmetic_comparison_operator __ additive_expr)+ {
       return { type: 'arithmetic', tail: l };
     }
 
@@ -1712,7 +1640,7 @@ primary
 
 column_ref
   = tbl:(ident __ DOT __)? col:column __ a:(DOUBLE_ARROW / SINGLE_ARROW) __ j:(literal_string / literal_numeric) __ ca:collate_expr? __ {
-      const tableName = tbl && tbl[0] || null
+      const tableName = tbl && tbl[0] || null;
       columnList.add(`select::${tableName}::${col}`);
       return {
         type: 'column_ref',
@@ -1811,7 +1739,7 @@ substitution_variable
       return start + parts1.join('') + pre + parts2.join(''); 
     }
 substitution_variable_prefix
- = "&&" / "&"
+ = '&&' / '&'
  
 
 ident_start = [A-Za-z_]
@@ -2272,6 +2200,7 @@ RBRAKE    = ']'
 SEMICOLON = ';'
 SINGLE_ARROW = '->'
 DOUBLE_ARROW = '->>'
+POUND_SIGN = '#'
 
 OPERATOR_CONCATENATION = '||'
 OPERATOR_AND = '&&'
@@ -2287,7 +2216,7 @@ __
 comment
   = block_comment
   / line_comment
-  / pound_sign_comment
+//  / pound_sign_comment --removed, to support pound_sign sql_plus_variable
 
 block_comment
   = "/*" (!"*/" char)* "*/"
@@ -2295,8 +2224,8 @@ block_comment
 line_comment
   = "--" (!EOL char)*
 
-pound_sign_comment
-  = "#" (!EOL char)*
+//pound_sign_comment
+//  = "#" (!EOL char)*
 
 keyword_comment
   = k:KW_COMMENT __ s:KW_ASSIGIN_EQUAL? __ c:literal_string {
@@ -2496,3 +2425,4 @@ json_type
 
 text_type
   = t:(KW_TINYTEXT / KW_TEXT / KW_MEDIUMTEXT / KW_LONGTEXT) { return { dataType: t }}
+  
